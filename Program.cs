@@ -6,7 +6,7 @@
         {
             Console.WriteLine("Hello, World!");
             Console.Title = "testing consoleui";
-            var cui = ConsoleUI.Instance;
+            var cui = CliUI.Instance;
             try
             {
                 while (true)
