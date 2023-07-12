@@ -11,7 +11,7 @@
             {
                 while (true)
                 {
-                    var c = Console.ReadKey(true);
+                    var c = Console.ReadKey(true);                
                     switch (c.Key)
                     {
                         case ConsoleKey.Escape:
@@ -43,6 +43,9 @@
                         case ConsoleKey.PageDown:
                         case ConsoleKey.DownArrow:
                             cui.GoUp(c.Key);
+                            break;
+                        case ConsoleKey.E:
+                            CliUI.Instance.Run();
                             break;
                     }
                 }

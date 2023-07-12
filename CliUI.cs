@@ -9,7 +9,7 @@
         /// <summary>
         /// Contains all possible commands
         /// </summary>
-        private static Dictionary<string, CliAction> commands = new Dictionary<string, CliAction>();
+        private Dictionary<string, CliAction> commands = new Dictionary<string, CliAction>();
         /// <summary>
         /// recent commands or recently added are on the top of the list
         /// </summary>
@@ -23,12 +23,14 @@
         /// <summary>
         /// keeping track of writings, may need to write another header if something else wrote in the mean time
         /// </summary>
-        private static uint consolePos = 0;
-        public static uint ConsolePos { get => consolePos; }
+        private uint consolePos = 0;
+        public uint ConsolePos { get => consolePos; }
 
         private static Queue<DateTime> outputDelay = new Queue<DateTime>();
+        private bool running;
+        private int commandPos;
 
-        internal static int Add(string cmd, Action action, int p)
+        internal int Add(string cmd, Action action, int p)
         {
             if (string.IsNullOrWhiteSpace(cmd))
                 return p;
@@ -57,7 +59,7 @@
         /// <param name="cmd1"></param>
         /// <param name="cmd2"></param>
         /// <returns>-1,0,1 like Comparison</returns>
-        private static int SortCommands(string cmd1, string cmd2)
+        private int SortCommands(string cmd1, string cmd2)
         {
             var ca1 = commands[cmd1];
             var ca2 = commands[cmd2];
@@ -68,16 +70,16 @@
             return cmd1.CompareTo(cmd2);
         }
 
-        public static void Write(string msg, int delay = 2000, bool newLine = true, ConsoleColor fg = ConsoleColor.Gray, ConsoleColor bg = ConsoleColor.Black)
+        public void WriteWithScreenTime(string msg, int delay = 2000, bool newLine = true, ConsoleColor fg = ConsoleColor.Gray, ConsoleColor bg = ConsoleColor.Black)
         {
             lock (Console.Out)
             {
                 ++consolePos;
                 var wh = Console.WindowHeight - 3;
-                while(outputDelay.Count >= wh)
+                while (outputDelay.Count >= wh)
                 {
-                    var d=outputDelay.Dequeue();
-                    while(DateTime.Now < d)
+                    var d = outputDelay.Dequeue();
+                    while (DateTime.Now < d)
                     {
                         if (Console.KeyAvailable)
                             break;
@@ -201,6 +203,169 @@
             return l;
         }
 
+        internal void Run()
+        {
+            Console.ForegroundColor = ConsoleColor.Yellow;
+            Console.WriteLine("Please enter command to execute");
+            if (Console.BufferHeight < maxHeight)
+                Console.BufferHeight = maxHeight;
+            running = true;
+            Action a = () => { running = false; };
+            Add("exit application", a, 1);
+            while (running)
+            {
+                if (!Console.KeyAvailable)
+                {
+                    Thread.Sleep(250);
+                    continue;
+                }
+                lock (Console.Out)
+                {
+                    if (!Console.KeyAvailable)
+                        continue; // someone else took the keypress during the lock
+                    var key = Console.ReadKey(true);
+                    switch (key.Key)
+                    {
+                        case ConsoleKey.UpArrow:
+                        case ConsoleKey.PageUp:
+                            GoUp(key.Key);
+                            continue;
+                    }
+                    // not going up in the history
+                    var oldCursorTop = Console.CursorTop;
+                    commandPos = 0;
+                    var cmdList = new List<string>();
+                    var keystrokes = string.Empty;
+                    bool filterAnew = false;
+                    var positions = new Dictionary<string, List<int>>();
+                    while (true)
+                    {
+                        if (key.Key == ConsoleKey.Enter)
+                        {
+                            Console.CursorTop = oldCursorTop;
+                            Console.CursorLeft = 0;
+                            if (string.IsNullOrWhiteSpace(keystrokes))
+                                break;
+                            if (commandPos < cmdList.Count)
+                            {
+                                var c = cmdList[commandPos];
+                                CliAction cmd;
+                                lock (commands)
+                                {
+                                    cmd = commands[c];
+                                }
+                                cmd.p = maxPreference + 1;
+                                Clear($"executing: {c}");
+                                cmd.action();
+                            }
+                            else
+                            {
+                                Console.Error.WriteLine($"mismatch between pos={commandPos} and list length={cmdList.Count}");
+                                break;
+                            }
+                            break;
+                        }
+                        Clear("commands", ConsoleColor.DarkBlue);
+                        if (key.Key == ConsoleKey.DownArrow)
+                        {
+                            ++commandPos;
+                        }
+                        else if (key.Key == ConsoleKey.UpArrow)
+                        {
+                            --commandPos;
+                        }
+                        else if (key.Key == ConsoleKey.Home)
+                        {
+                            commandPos = 0;
+                        }
+                        else if (key.Key == ConsoleKey.Backspace)
+                        {
+                            commandPos = 0;
+                            cmdList.Clear();
+                            if (keystrokes.Length > 1)
+                                keystrokes = keystrokes.Substring(0, keystrokes.Length - 1);
+                        }
+                        else if (Char.IsLetterOrDigit(key.KeyChar) || okChars.Contains(key.KeyChar))
+                        {
+                            keystrokes += key.KeyChar;
+                            filterAnew = true;
+                        }
+                        if (cmdList.Count == 0)
+                        {
+                            // initialize the list
+                            cmdList.AddRange(commands.Keys);
+                            cmdList.Sort(SortCommands);
+                            filterAnew = true;
+                        }
+                        if (filterAnew)
+                        {
+                            for (int i = 0; i < cmdList.Count;)
+                            {
+                                var cmd = cmdList[i];
+                                var posList = CheckString(cmd, keystrokes);
+                                if (posList.Count != keystrokes.Length)
+                                    cmdList.RemoveAt(i);
+                                else
+                                {
+                                    positions[cmd] = posList;
+                                    ++i;
+                                }
+                            }
+                            if (cmdList.Count == 0)
+                            {
+                                Console.WriteLine($"no matching command for {keystrokes}");
+                                keystrokes = string.Empty;
+                                continue;
+                            }
+                            if (commandPos >= cmdList.Count)
+                                commandPos = cmdList.Count - 1;
+                        }
+                        var wh = Console.WindowHeight - 1;
+                        int skip = int.Max(0, int.Min(commandPos - wh / 2, cmdList.Count - wh));
+                        Console.CursorTop = oldCursorTop;
+                        for (int i = 0; i < wh; ++i)
+                        {
+
+                            if (Console.KeyAvailable)
+                                break;
+                            if (skip + i >= cmdList.Count)
+                                break;
+                            var cmd = cmdList[skip + i];
+                            List<int> posList;
+                            try
+                            {
+                                posList = positions[cmd];
+                            }
+                            catch (Exception)
+                            {
+                                posList = new List<int>();
+                            }
+                            int pos = 0;
+                            Console.CursorLeft = 1; // one space for indicator
+                            foreach (int p in posList)
+                            {
+                                if (p > pos)
+                                {
+                                    Console.ForegroundColor = ConsoleColor.Blue;
+                                    Console.Write(cmd.Substring(pos, p - pos));
+                                }
+                                Console.ForegroundColor = ConsoleColor.White;
+                                Console.Write(cmd.Substring(p, 1));
+                                pos = p + 1;
+                            }
+                            Console.ForegroundColor = ConsoleColor.Blue;
+                            Console.WriteLine(cmd.Substring(pos));
+                        }
+                        Console.CursorTop = oldCursorTop + commandPos - skip;
+                        Console.CursorLeft = 0;
+                        Console.ForegroundColor = ConsoleColor.Red;
+                        Console.Write((char)187);
+                        key = Console.ReadKey(true);
+                    }
+
+                }
+            }
+        }
     }
     /// <summary>
     /// datastructure that holds the action and preference value
